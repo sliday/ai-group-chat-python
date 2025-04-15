@@ -1,5 +1,18 @@
-fastapi==0.110.0
-uvicorn==0.28.0
-requests==2.31.0
-python-multipart==0.0.9
-pydantic==2.6.3
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# HTTP Client
+requests>=2.31.0
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Data Validation
+pydantic>=2.4.0
+
+# Static File Serving
+aiofiles>=23.2.1  # Required for FileResponse in FastAPI
+
+# Type Hints
+typing-extensions>=4.8.0

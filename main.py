@@ -1,6 +1,6 @@
 # main.py
 import os
-import requests
+import httpx
 import json
 import logging
 from uuid import uuid4
@@ -119,7 +119,7 @@ Examples of inappropriate content:
     ]
 
     try:
-        response = requests.post(
+        response = httpx.post(
             url=OPENROUTER_API_URL,
             headers=get_openrouter_headers(),
             json={
@@ -285,7 +285,7 @@ async def get_messages(room_id: str):
 
 # Send Message & Get AI Response
 @app.post("/api/chat/{room_id}/message")
-async def post_message(room_id: str, payload: MessagePayload):
+async def post_message(room_id: str, payload: MessagePayload, request: Request):
     """Receives a user message, moderates it, adds to history if appropriate, gets AI response."""
     if room_id not in chats:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -352,64 +352,103 @@ async def post_message(room_id: str, payload: MessagePayload):
         if msg.get("role") in ["user", "assistant"]
     ]
 
+    # --- Refactored Streaming Logic with httpx --- 
     async def generate_response():
+        full_content = ""
+        assistant_timestamp = None
         try:
-            response = requests.post(
-                url=OPENROUTER_API_URL,
-                headers=get_openrouter_headers(),
-                json={
-                    "model": "openai/gpt-4o-mini",
-                    "messages": api_messages,
-                    "max_tokens": 1000,
-                    "stream": True
-                },
-                stream=True,
-                timeout=35
-            )
-            response.raise_for_status()
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                async with client.stream(
+                    "POST",
+                    url=OPENROUTER_API_URL,
+                    headers=get_openrouter_headers(),
+                    json={
+                        "model": "openai/gpt-4o-mini",
+                        "messages": api_messages,
+                        "max_tokens": 1000,
+                        "stream": True
+                    }
+                ) as response:
+                    # Check for HTTP errors
+                    response.raise_for_status()
 
-            # Initialize variables for collecting the streamed response
-            assistant_timestamp = datetime.now().isoformat()
-            full_content = ""
-            
-            # Stream the response chunks
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        # Remove 'data: ' prefix and parse JSON
-                        json_str = line.decode('utf-8').removeprefix('data: ')
-                        if json_str.strip() == '[DONE]':
-                            break
-                        
-                        chunk = json.loads(json_str)
-                        if chunk.get('choices') and len(chunk['choices']) > 0:
-                            delta = chunk['choices'][0].get('delta', {})
-                            if 'content' in delta:
-                                content = delta['content']
-                                full_content += content
-                                # Yield each chunk as a JSON event
-                                yield f"data: {json.dumps({'content': content, 'timestamp': assistant_timestamp})}\n\n"
-                    except json.JSONDecodeError:
-                        continue
+                    # Initialize timestamp on first successful chunk received
+                    assistant_timestamp = datetime.now().isoformat()
 
-            # Save the complete message to chat history
-            if full_content:
-                assistant_message_entry = {
-                    "role": "assistant",
-                    "content": full_content,
-                    "username": "AI Assistant",
-                    "timestamp": assistant_timestamp
-                }
-                chats[room_id].append(assistant_message_entry)
-                logger.info(f"Room {room_id} - AI: {full_content[:80]}...")
+                    # Asynchronously iterate over the streamed lines
+                    async for line in response.aiter_lines():
+                        # Check for client disconnect
+                        if await request.is_disconnected():
+                            logger.warning(f"Client disconnected during stream for room {room_id}")
+                            break # Exit the loop if client disconnected
+                            
+                        if line:
+                            try:
+                                json_str = line.removeprefix('data: ').strip()
+                                if not json_str:
+                                    continue
+                                    
+                                if json_str == '[DONE]':
+                                    break
+                                
+                                chunk = json.loads(json_str)
+                                if chunk.get('choices') and len(chunk['choices']) > 0:
+                                    delta = chunk['choices'][0].get('delta', {})
+                                    if 'content' in delta:
+                                        content = delta['content']
+                                        if content:
+                                            full_content += content
+                                            # Yield each chunk as a JSON event
+                                            yield f"data: {json.dumps({'content': content, 'timestamp': assistant_timestamp})}
 
-            # Send a completion event
-            yield f"data: [DONE]\n\n"
+"
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to decode JSON chunk: {line}")
+                                continue
+                            except Exception as e:
+                                logger.error(f"Error processing stream line: {e} - Line: {line}")
+                                continue # Try to continue with the next line
 
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error during streaming request: {e.response.status_code} - {e.response.text}")
+            error_msg = json.dumps({"error": f"AI service error: {e.response.status_code}"})
+            yield f"data: {error_msg}
+
+"
+        except httpx.RequestError as e:
+            logger.error(f"Request error during streaming: {e}")
+            error_msg = json.dumps({"error": "Failed to connect to AI service"})
+            yield f"data: {error_msg}
+
+"
         except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            error_msg = json.dumps({"error": str(e)})
-            yield f"data: {error_msg}\n\n"
+            logger.error(f"Unexpected error during AI response generation: {e}", exc_info=True)
+            error_msg = json.dumps({"error": "An unexpected error occurred"})
+            yield f"data: {error_msg}
+
+"
+        finally:
+             # Check if client is still connected before proceeding
+            if not await request.is_disconnected():
+                # Save the complete message to chat history if content was generated
+                if full_content and assistant_timestamp:
+                    assistant_message_entry = {
+                        "role": "assistant",
+                        "content": full_content,
+                        "username": "AI Assistant",
+                        "timestamp": assistant_timestamp
+                    }
+                    chats[room_id].append(assistant_message_entry)
+                    logger.info(f"Room {room_id} - AI: {full_content[:80]}...")
+                # Send a completion event even if there was an error or disconnect earlier
+                # Client needs this to know the stream ended server-side
+                yield f"data: [DONE]
+
+"
+            else:
+                logger.info(f"Stream for room {room_id} ended due to client disconnect. Not saving final message.")
+
+    # --- End Refactored Streaming Logic --- 
 
     return StreamingResponse(
         generate_response(),

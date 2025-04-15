@@ -6,45 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Group AI Chat</title>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.1/dist/full.min.css" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@4/dist/fp.min.js"></script>
     <!-- Add Emoji Mart -->
     <script src="https://cdn.jsdelivr.net/npm/@emoji-mart/data@latest/sets/14/native.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/emoji-mart@latest/dist/browser.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    typography: {
-                        DEFAULT: {
-                            css: {
-                                color: 'inherit',
-                                a: {
-                                    color: 'inherit',
-                                    '&:hover': {
-                                        color: 'inherit',
-                                    },
-                                },
-                                h1: { color: 'inherit' },
-                                h2: { color: 'inherit' },
-                                h3: { color: 'inherit' },
-                                h4: { color: 'inherit' },
-                                code: { color: 'inherit' },
-                                pre: { 
-                                    backgroundColor: 'rgba(0,0,0,0.1)',
-                                    color: 'inherit'
-                                },
-                                strong: { color: 'inherit' },
-                                blockquote: { color: 'inherit' },
-                            }
-                        }
-                    }
-                }
-            },
-            plugins: [require('@tailwindcss/typography')],
-        }
-    </script>
     <style>
         #chat-box {
             scroll-behavior: smooth;
@@ -275,10 +242,7 @@
 
             // --- State Variables ---
             let currentRoomId = null;
-            let pollIntervalId = null;
-            let displayedMessagesCount = 0;
             let username = '';
-            const POLLING_INTERVAL = 3000;
             const PRESENCE_INTERVAL = 10000;
 
             // Replace animal emojis with regular names
@@ -459,69 +423,35 @@
                 }
             }
 
-            // --- Core Logic ---
-
-            // Load chat history and update display (used by initial load and polling)
-            async function fetchAndUpdateHistory() {
-                if (!currentRoomId || document.hidden) return; // Don't fetch if no room or tab hidden
-
+            // Load initial chat history when joining a room
+            async function loadInitialHistory() {
+                if (!currentRoomId) return;
+                console.log(`Loading initial history for room ${currentRoomId}...`);
                 try {
                     const response = await fetch(`/api/chat/${currentRoomId}/messages`);
                     if (!response.ok) {
-                        // Handle room not found or other errors
                         if (response.status === 404) {
                             showToast("Chat room not found. Redirecting...", true, 4000);
-                            stopPolling();
-                            // Redirect to home after a delay
                             setTimeout(() => window.location.href = '/', 4000);
                         } else {
-                            console.error(`Failed to fetch messages: ${response.status}`);
-                            // Maybe show a temporary error in chat? For now, just log.
+                            throw new Error(`Failed to fetch history: ${response.status}`);
                         }
-                        return; // Stop processing on error
+                        return;
                     }
-
                     const data = await response.json();
                     const history = data.messages || [];
 
-                    // Only append messages that haven't been displayed yet
-                    const newMessages = history.slice(displayedMessagesCount);
-                    if (newMessages.length > 0) {
-                        const shouldScroll = elements.chatBox.scrollTop + elements.chatBox.clientHeight >= elements.chatBox.scrollHeight - 50; // Check if near bottom before adding
-
-                        newMessages.forEach(msg => {
-                            addMessageToChatDOM(msg);
-                        });
-                        displayedMessagesCount = history.length; // Update the count
-
-                        if (shouldScroll) {
-                            scrollToBottom();
-                        }
-                    }
+                    elements.chatBox.innerHTML = ''; // Clear chat box before loading
+                    history.forEach(msg => {
+                        addMessageToChatDOM(msg); // Add each message
+                    });
+                    scrollToBottom(); // Scroll down after loading
+                    console.log(`Loaded ${history.length} messages.`);
                 } catch (error) {
-                    console.error("Error fetching chat history:", error);
-                    // Consider adding a visual indicator for connection issues
+                    console.error("Error loading initial chat history:", error);
+                    showToast(`Error loading history: ${error.message}`, true, 5000);
                 }
             }
-
-            // Start polling for new messages
-            function startPolling() {
-                stopPolling(); // Clear any existing interval first
-                // Fetch immediately first time
-                fetchAndUpdateHistory();
-                pollIntervalId = setInterval(fetchAndUpdateHistory, POLLING_INTERVAL);
-                console.log(`Polling started for room ${currentRoomId}`);
-            }
-
-            // Stop polling
-            function stopPolling() {
-                if (pollIntervalId) {
-                    clearInterval(pollIntervalId);
-                    pollIntervalId = null;
-                    console.log("Polling stopped.");
-                }
-            }
-
 
             // Update the sendMessage function to handle streaming
             const sendMessage = debounce(async () => {
@@ -732,19 +662,8 @@
 
             // Handle visibility change to stop/start polling
             document.addEventListener('visibilitychange', () => {
-                if (document.hidden) {
-                    // Tab became hidden, maybe stop polling? Or just let fetchAndUpdateHistory handle it.
-                    // stopPolling(); // Option: explicitly stop polling when hidden
-                } else {
-                    // Tab became visible, fetch immediately and restart polling if needed
-                    if (currentRoomId && !pollIntervalId) {
-                        console.log("Tab became visible, resuming polling.");
-                        startPolling();
-                    } else if (currentRoomId) {
-                        // Polling might already be running, but fetch immediately for fresh data
-                        fetchAndUpdateHistory();
-                    }
-                }
+                // Placeholder for potential future visibility handling (e.g., presence)
+                // Polling is removed, so no action needed here for messages.
             });
 
             // --- Presence Management ---
@@ -842,15 +761,14 @@
                 stopPresenceTracking();
                 elements.activeUsers.classList.add('hidden');
                 elements.activeUsers.classList.remove('flex');
-                // ... existing room leave code ...
+                currentRoomId = null; // Clear current room ID
+                elements.chatBox.innerHTML = ''; // Clear chat box
+                // No need to stop polling as it's removed
             }
 
             // --- Initialization ---
             function initialize() {
                 console.log("Initializing UI...");
-                // Stop any previous polling
-                stopPolling();
-                displayedMessagesCount = 0; // Reset message counter on init
                 elements.chatBox.innerHTML = ''; // Clear chat box
 
                 // Load saved theme
@@ -882,8 +800,8 @@
                     elements.roomIdDisplay.textContent = currentRoomId;
                     elements.roomInfo.classList.remove('hidden'); // Show room info in navbar
 
-                    // Start polling for this room
-                    startPolling();
+                    // Load initial history
+                    loadInitialHistory(); // Changed from startPolling
 
                     elements.messageInput.focus();
                 } else {

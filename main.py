@@ -70,7 +70,31 @@ def get_openrouter_headers() -> Dict[str, str]:
 def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
     """Check if a message is appropriate using AI. Returns simple response."""
     moderation_prompt = [
-        {"role": "system", "content": """You are a strict chat moderator. If message contains ANY inappropriate content (abuse, hate, threats, excessive profanity, spam), respond with reason in max 10 tokens. If message is fine, respond with "0"."""},
+        {"role": "system", "content": """You are a strict chat moderator. Message is inappropriate if it contains ANY of:
+
+1. Personal attacks or insults
+2. Hate speech (racism, sexism, etc.)
+3. Threats or intimidation
+4. Sexual content or harassment
+5. Excessive profanity
+6. Spam or flooding
+7. Personal information sharing
+8. Scams or phishing attempts
+9. Extremist content
+10. Drug trafficking
+11. Violence promotion
+12. Deliberate misinformation
+
+If inappropriate, respond with reason in max 10 tokens.
+If message is fine, respond with "0".
+
+Example responses:
+- "0" (for clean message)
+- "hate speech"
+- "harassment"
+- "spam flood"
+- "threats"
+"""},
         {"role": "user", "content": message}
     ]
 
@@ -95,11 +119,14 @@ def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
             if moderation_result == "0":
                 return {"is_inappropriate": False, "reason": None, "action": "none"}
             else:
-                # If any non-zero response, treat as inappropriate
+                # Determine action based on severity
+                severe_violations = ["threat", "hate", "abuse", "extremist", "scam", "phish", "drug", "violence"]
+                is_severe = any(word in moderation_result.lower() for word in severe_violations)
+                
                 return {
                     "is_inappropriate": True,
                     "reason": moderation_result,
-                    "action": "ban" if any(word in moderation_result.lower() for word in ["threat", "hate", "abuse"]) else "delete"
+                    "action": "ban" if is_severe else "delete"
                 }
         
         return {"is_inappropriate": False, "reason": None, "action": "none"}
@@ -264,7 +291,7 @@ async def post_message(room_id: str, payload: MessagePayload):
             # Add system message about ban
             system_message = {
                 "role": "system",
-                "content": f"User '{username}' has been banned for inappropriate behavior.",
+                "content": f"User '{username}' has been banned for inappropriate behavior: {moderation_result['reason']}",
                 "username": "System",
                 "timestamp": datetime.now().isoformat()
             }
@@ -273,10 +300,10 @@ async def post_message(room_id: str, payload: MessagePayload):
             raise HTTPException(status_code=403, detail=f"Banned: {moderation_result['reason']}")
         
         if moderation_result["action"] == "delete":
-            # Add a placeholder message
+            # Add a placeholder message with reason
             deleted_message = {
                 "role": "system",
-                "content": "[Message deleted by moderator]",
+                "content": f"[Message deleted by moderator - Reason: {moderation_result['reason']}]",
                 "username": "System",
                 "timestamp": datetime.now().isoformat()
             }

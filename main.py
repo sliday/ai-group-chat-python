@@ -68,15 +68,35 @@ def get_openrouter_headers() -> Dict[str, str]:
     return headers
 
 def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
-    """Check if a message is appropriate using AI. Returns simple response."""
+    """Check if a message is appropriate using AI and explicit word filtering."""
+    # First, check for explicit profanity using a simple word list
+    explicit_profanity = {
+        "fuck", "shit", "bitch", "cunt", "dick", "pussy", "asshole", "bastard",
+        # Add variations
+        "fuckyou", "fuk", "fucker", "fucking", "fuckin", "fck", "stfu"
+    }
+    
+    # Convert to lowercase and remove spaces for checking
+    message_normalized = message.lower().replace(" ", "")
+    
+    # Check for explicit profanity first
+    for word in explicit_profanity:
+        if word in message_normalized:
+            return {
+                "is_inappropriate": True,
+                "reason": "explicit profanity",
+                "action": "ban"  # Immediate ban for explicit profanity
+            }
+
+    # If no explicit profanity found, proceed with AI moderation
     moderation_prompt = [
         {"role": "system", "content": """You are a strict chat moderator. Message is inappropriate if it contains ANY of:
 
-1. Personal attacks or insults
-2. Hate speech (racism, sexism, etc.)
-3. Threats or intimidation
-4. Sexual content or harassment
-5. Excessive profanity
+1. Indirect profanity or offensive language
+2. Personal attacks or insults
+3. Hate speech (racism, sexism, etc.)
+4. Threats or intimidation
+5. Sexual content or harassment
 6. Spam or flooding
 7. Personal information sharing
 8. Scams or phishing attempts
@@ -88,12 +108,11 @@ def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
 If inappropriate, respond with reason in max 10 tokens.
 If message is fine, respond with "0".
 
-Example responses:
-- "0" (for clean message)
-- "hate speech"
-- "harassment"
-- "spam flood"
-- "threats"
+Examples of inappropriate content:
+- Coded profanity or leetspeak
+- Suggestive or inappropriate innuendos
+- Passive-aggressive insults
+- Hostile or aggressive behavior
 """},
         {"role": "user", "content": message}
     ]
@@ -103,9 +122,10 @@ Example responses:
             url=OPENROUTER_API_URL,
             headers=get_openrouter_headers(),
             json={
-                "model": "openai/gpt-4-0125-preview",
+                "model": "openai/gpt-4o-mini",
                 "messages": moderation_prompt,
-                "max_tokens": 10
+                "max_tokens": 10,
+                "temperature": 0.1  # Lower temperature for more consistent moderation
             },
             timeout=10
         )
@@ -119,7 +139,7 @@ Example responses:
             if moderation_result == "0":
                 return {"is_inappropriate": False, "reason": None, "action": "none"}
             else:
-                # Determine action based on severity
+                # Determine severity based on the response
                 severe_violations = ["threat", "hate", "abuse", "extremist", "scam", "phish", "drug", "violence"]
                 is_severe = any(word in moderation_result.lower() for word in severe_violations)
                 
@@ -132,6 +152,13 @@ Example responses:
         return {"is_inappropriate": False, "reason": None, "action": "none"}
     except Exception as e:
         logger.error(f"Moderation check failed: {e}")
+        # If AI moderation fails, be conservative and check for basic profanity again
+        if any(word in message_normalized for word in explicit_profanity):
+            return {
+                "is_inappropriate": True,
+                "reason": "potentially inappropriate content",
+                "action": "delete"
+            }
         return {"is_inappropriate": False, "reason": None, "action": "none"}
 
 def is_user_banned(room_id: str, fingerprint: str) -> bool:

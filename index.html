@@ -44,7 +44,6 @@
         }
 
         @keyframes typing-bounce {
-
             0%,
             80%,
             100% {
@@ -187,19 +186,12 @@
             </div>
 
             <!-- Input Area -->
-            <div class="join w-full relative">
+            <div class="join w-full">
                 <input id="username-input" type="text" class="input input-bordered join-item w-1/4 md:w-1/5"
                     placeholder="Your Name" maxlength="25" />
                 <input id="message-input" type="text" class="input input-bordered join-item flex-grow"
                     placeholder="Type your message and press Enter..." />
-                <button id="emoji-btn" class="btn btn-ghost join-item" title="Add Emoji">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                            d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </button>
                 <button id="send-btn" class="btn btn-primary join-item w-auto px-6">Send</button>
-                <div id="emoji-picker" class="hidden"></div>
             </div>
         </div>
     </div>
@@ -229,12 +221,12 @@
             const POLLING_INTERVAL = 3000;
             const PRESENCE_INTERVAL = 10000;
 
-            // Animal emoji list for random names
-            const ANIMAL_EMOJIS = [
-                "🦊", "🐼", "🦁", "🐯", "🐮", "🐷", "🐸", "🐙", "🦄", "🦋",
-                "🐬", "🦈", "🦭", "🦘", "🦒", "🦏", "🐘", "🦛", "🐪", "🐫",
-                "🦍", "🦧", "🐵", "🐶", "🐱", "🐭", "🐹", "🐰", "🐻", "🐨",
-                "🐲", "🦕", "🦖", "🐳", "🦩", "🦦", "🦥", "🦡", "🦨", "🦔"
+            // Replace animal emojis with regular names
+            const ANIMAL_NAMES = [
+                "Fox", "Panda", "Lion", "Tiger", "Cow", "Pig", "Frog", "Octopus", "Horse", "Butterfly",
+                "Dolphin", "Shark", "Seal", "Kangaroo", "Giraffe", "Rhino", "Elephant", "Hippo", "Camel", "Llama",
+                "Gorilla", "Orangutan", "Monkey", "Dog", "Cat", "Mouse", "Hamster", "Rabbit", "Bear", "Koala",
+                "Dragon", "Dino", "Rex", "Whale", "Flamingo", "Otter", "Sloth", "Badger", "Skunk", "Hedgehog"
             ];
 
             const ADJECTIVES = [
@@ -244,11 +236,11 @@
                 "Merry", "Sunny", "Perky", "Snappy"
             ];
 
-            // Generate random animal emoji name
+            // Generate random animal name
             function generateRandomName() {
-                const randomEmoji = ANIMAL_EMOJIS[Math.floor(Math.random() * ANIMAL_EMOJIS.length)];
+                const randomAnimal = ANIMAL_NAMES[Math.floor(Math.random() * ANIMAL_NAMES.length)];
                 const randomAdjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-                return `${randomAdjective}${randomEmoji}`;
+                return `${randomAdjective}${randomAnimal}`;
             }
 
             // --- DOM Elements ---
@@ -336,14 +328,12 @@
                 const isSystem = message.role === 'system';
                 const isOwnMessage = isUser && message.username === currentUser;
                 
-                // Determine message alignment and style
                 let align = isUser ? 'chat-end' : 'chat-start';
                 if (isSystem) align = 'chat-middle';
                 
-                // Determine bubble color
-                let bubbleColor = 'chat-bubble-secondary'; // Default for AI
+                let bubbleColor = 'chat-bubble-secondary';
                 if (isSystem) {
-                    bubbleColor = 'chat-bubble-warning'; // Special color for system messages
+                    bubbleColor = 'chat-bubble-warning';
                 } else if (isUser) {
                     bubbleColor = isOwnMessage ? 'chat-bubble-primary' : 'chat-bubble-accent';
                 }
@@ -355,7 +345,6 @@
                 const messageElement = document.createElement('div');
                 messageElement.className = `chat ${align} mb-2`;
                 
-                // Special styling for system messages
                 if (isSystem) {
                     messageElement.innerHTML = `
                         <div class="chat-bubble ${bubbleColor} text-sm italic">${content}</div>
@@ -370,21 +359,6 @@
                     `;
                 }
                 
-                const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                messageElement.setAttribute('data-message-id', messageId);
-
-                // Add reactions container
-                const reactionsContainer = document.createElement('div');
-                reactionsContainer.className = 'chat-bubble-reactions';
-                messageElement.appendChild(reactionsContainer);
-
-                // Add quick reaction button
-                const quickReactButton = document.createElement('button');
-                quickReactButton.className = 'btn btn-ghost btn-xs';
-                quickReactButton.innerHTML = '😀';
-                quickReactButton.onclick = () => addReaction(messageId, '👍', elements.usernameInput.value);
-                reactionsContainer.appendChild(quickReactButton);
-
                 elements.chatBox.appendChild(messageElement);
             }
 
@@ -791,108 +765,6 @@
 
             // Run initialization
             initialize();
-
-            // Initialize emoji picker
-            let picker = null;
-            const emojiButton = document.getElementById('emoji-btn');
-            const emojiPickerContainer = document.getElementById('emoji-picker');
-            const messageInput = document.getElementById('message-input');
-
-            // Create and initialize emoji picker
-            function initEmojiPicker() {
-                picker = new EmojiMart.Picker({
-                    data: emojiData,  // Use preloaded data
-                    onEmojiSelect: (emoji) => {
-                        const cursorPos = messageInput.selectionStart;
-                        const textBeforeCursor = messageInput.value.substring(0, cursorPos);
-                        const textAfterCursor = messageInput.value.substring(cursorPos);
-                        messageInput.value = textBeforeCursor + emoji.native + textAfterCursor;
-                        messageInput.focus();
-                        toggleEmojiPicker(false);
-                    },
-                    theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
-                });
-                emojiPickerContainer.appendChild(picker);
-            }
-
-            // Toggle emoji picker visibility
-            function toggleEmojiPicker(show) {
-                if (show === undefined) {
-                    show = emojiPickerContainer.classList.contains('hidden');
-                }
-                emojiPickerContainer.classList.toggle('hidden', !show);
-                if (show && !picker) {
-                    initEmojiPicker();
-                }
-            }
-
-            // Event listeners for emoji picker
-            emojiButton.addEventListener('click', () => toggleEmojiPicker());
-            document.addEventListener('click', (e) => {
-                if (!emojiPickerContainer.contains(e.target) && !emojiButton.contains(e.target)) {
-                    toggleEmojiPicker(false);
-                }
-            });
-
-            // Update emoji picker theme when theme changes
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.attributeName === 'data-theme') {
-                        if (picker) {
-                            picker.updateTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
-                        }
-                    }
-                });
-            });
-            observer.observe(document.documentElement, { attributes: true });
-
-            // Message reactions storage
-            const messageReactions = new Map(); // messageId -> {emoji: Set(usernames)}
-
-            // Add reaction to message
-            async function addReaction(messageId, emoji, username) {
-                if (!messageReactions.has(messageId)) {
-                    messageReactions.set(messageId, new Map());
-                }
-                const reactions = messageReactions.get(messageId);
-                if (!reactions.has(emoji)) {
-                    reactions.set(emoji, new Set());
-                }
-                const users = reactions.get(emoji);
-                
-                if (users.has(username)) {
-                    users.delete(username);
-                    if (users.size === 0) {
-                        reactions.delete(emoji);
-                    }
-                } else {
-                    users.add(username);
-                }
-                
-                updateReactionDisplay(messageId);
-            }
-
-            // Update reaction display for a message
-            function updateReactionDisplay(messageId) {
-                const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-                if (!messageElement) return;
-
-                const reactionsContainer = messageElement.querySelector('.chat-bubble-reactions');
-                if (!reactionsContainer) return;
-
-                reactionsContainer.innerHTML = '';
-                const reactions = messageReactions.get(messageId);
-                
-                if (reactions) {
-                    reactions.forEach((users, emoji) => {
-                        const button = document.createElement('button');
-                        button.className = `reaction-button ${users.has(elements.usernameInput.value) ? 'active' : ''}`;
-                        button.innerHTML = `${emoji}<span class="reaction-count">${users.size}</span>`;
-                        button.onclick = () => addReaction(messageId, emoji, elements.usernameInput.value);
-                        reactionsContainer.appendChild(button);
-                    });
-                }
-            }
         });
     </script>
 </body>

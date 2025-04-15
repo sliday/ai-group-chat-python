@@ -421,7 +421,7 @@
                             ${time ? `<time class="ml-1">${time}</time>` : ''}
                         </div>
                         <div class="chat-bubble ${bubbleColor} ${hasMarkdown ? 'has-markdown' : ''}">
-                            ${hasMarkdown ? `<div class="prose prose-sm dark:prose-invert">${processedContent}</div>` : processedContent}
+                            ${hasMarkdown ? `<div class="prose dark:prose-invert">${processedContent}</div>` : processedContent}
                         </div>
                     `;
                 }
@@ -593,9 +593,9 @@
                                                     AI Assistant
                                                     <time class="ml-1">${formatTime(timestamp)}</time>
                                                 </div>
-                                                <div class="chat-bubble chat-bubble-primary text-base max-w-[80%]">
+                                                <div class="chat-bubble chat-bubble-secondary text-base max-w-[80%]">
                                                     <div class="break-words">
-                                                        <div class="prose dark:prose-invert">${marked.parse(content, { breaks: true, gfm: true })}</div>
+                                                        <div class="prose dark:prose-invert"></div>
                                                     </div>
                                                 </div>
                                             `;

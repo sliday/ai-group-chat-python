@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Group AI Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.1/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        #chat-box {
+            scroll-behavior: smooth;
+        }
+
+        #chat-box::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #chat-box::-webkit-scrollbar-thumb {
+            background-color: #888;
+            border-radius: 3px;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            margin: 0 2px;
+            background-color: currentColor;
+            border-radius: 50%;
+            animation: typing-bounce 1.4s infinite ease-in-out both;
+        }
+
+        .typing-indicator span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes typing-bounce {
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0);
+            }
+
+            40% {
+                transform: scale(1.0);
+            }
+        }
+
+        /* Ensure body takes full height for footer potentially */
+        body {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        .container {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+
+<body class="bg-base-200">
+    <div class="container max-w-4xl mx-auto p-4 flex flex-col">
+        <!-- Navbar -->
+        <div class="navbar bg-base-300 rounded-box mb-4 shadow-md">
+            <div class="flex-1">
+                <a href="/" class="btn btn-ghost text-xl">Group AI Chat</a>
+            </div>
+            <div class="flex-none gap-2">
+                <!-- Room ID Display and Copy -->
+                <div id="room-info" class="hidden items-center mr-2">
+                    <span class="badge badge-neutral badge-lg mr-1">Room: <span id="room-id-display"
+                            class="font-mono ml-1"></span></span>
+                    <button id="copy-room-btn" class="btn btn-xs btn-ghost btn-circle" title="Copy Room URL">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                    </button>
+                </div>
+                <!-- Theme Selector -->
+                <div class="dropdown dropdown-end" id="theme-selector">
+                    <button class="btn btn-ghost btn-circle" aria-label="Select Theme">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                            stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                        </svg>
+                    </button>
+                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 mt-4">
+                        <li><a data-set-theme="light">Light</a></li>
+                        <li><a data-set-theme="dark">Dark</a></li>
+                        <li><a data-set-theme="cupcake">Cupcake</a></li>
+                        <li><a data-set-theme="bumblebee">Bumblebee</a></li>
+                        <li><a data-set-theme="emerald">Emerald</a></li>
+                        <li><a data-set-theme="corporate">Corporate</a></li>
+                        <li><a data-set-theme="synthwave">Synthwave</a></li>
+                        <li><a data-set-theme="retro">Retro</a></li>
+                        <li><a data-set-theme="cyberpunk">Cyberpunk</a></li>
+                        <li><a data-set-theme="valentine">Valentine</a></li>
+                        <li><a data-set-theme="halloween">Halloween</a></li>
+                        <li><a data-set-theme="garden">Garden</a></li>
+                        <li><a data-set-theme="forest">Forest</a></li>
+                        <li><a data-set-theme="aqua">Aqua</a></li>
+                        <li><a data-set-theme="lofi">Lofi</a></li>
+                        <li><a data-set-theme="pastel">Pastel</a></li>
+                        <li><a data-set-theme="fantasy">Fantasy</a></li>
+                        <li><a data-set-theme="wireframe">Wireframe</a></li>
+                        <li><a data-set-theme="black">Black</a></li>
+                        <li><a data-set-theme="luxury">Luxury</a></li>
+                        <li><a data-set-theme="dracula">Dracula</a></li>
+                        <li><a data-set-theme="cmyk">CMYK</a></li>
+                        <li><a data-set-theme="autumn">Autumn</a></li>
+                        <li><a data-set-theme="business">Business</a></li>
+                        <li><a data-set-theme="acid">Acid</a></li>
+                        <li><a data-set-theme="lemonade">Lemonade</a></li>
+                        <li><a data-set-theme="night">Night</a></li>
+                        <li><a data-set-theme="coffee">Coffee</a></li>
+                        <li><a data-set-theme="winter">Winter</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Welcome Screen -->
+        <div id="welcome-screen" class="card bg-base-100 shadow-xl flex-grow">
+            <div class="card-body items-center text-center">
+                <h2 class="card-title text-3xl mb-6">Welcome to Group AI Chat!</h2>
+                <p class="mb-6 text-lg">Create a chat room and share the link, or join an existing one.</p>
+                <div class="flex flex-col sm:flex-row justify-center items-center gap-4 w-full max-w-md">
+                    <button id="create-room-btn" class="btn btn-primary w-full sm:w-auto">Create New Room</button>
+                    <div class="join w-full sm:w-auto">
+                        <input id="join-room-input" type="text" class="input input-bordered join-item w-full"
+                            placeholder="Enter Room ID" />
+                        <button id="join-room-btn" class="btn btn-secondary join-item">Join</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Interface -->
+        <div id="chat-container" class="hidden flex flex-col flex-grow">
+            <!-- Chat Messages Box -->
+            <div id="chat-box" class="flex-grow h-[60vh] overflow-y-auto bg-base-100 rounded-lg p-4 shadow-xl mb-4">
+                <!-- Messages will be dynamically added here -->
+            </div>
+
+            <!-- Input Area -->
+            <div class="join w-full">
+                <input id="username-input" type="text" class="input input-bordered join-item w-1/4 md:w-1/5"
+                    placeholder="Your Name" maxlength="25" />
+                <input id="message-input" type="text" class="input input-bordered join-item flex-grow"
+                    placeholder="Type your message and press Enter..." />
+                <button id="send-btn" class="btn btn-primary join-item w-auto px-6">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast toast-top toast-center">
+        <div class="alert alert-success hidden">
+            <span id="toast-message"></span>
+        </div>
+        <div class="alert alert-error hidden">
+            <span id="toast-error-message"></span>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- State Variables ---
+            let currentRoomId = null;
+            let pollIntervalId = null;
+            let displayedMessagesCount = 0; // Track displayed messages to avoid duplicates on poll
+            const POLLING_INTERVAL = 3000; // Poll every 3 seconds
+
+            // --- DOM Elements ---
+            const elements = {
+                welcomeScreen: document.getElementById('welcome-screen'),
+                chatContainer: document.getElementById('chat-container'),
+                chatBox: document.getElementById('chat-box'),
+                messageInput: document.getElementById('message-input'),
+                usernameInput: document.getElementById('username-input'),
+                sendBtn: document.getElementById('send-btn'),
+                createRoomBtn: document.getElementById('create-room-btn'),
+                joinRoomBtn: document.getElementById('join-room-btn'),
+                joinRoomInput: document.getElementById('join-room-input'),
+                roomIdDisplay: document.getElementById('room-id-display'),
+                roomInfo: document.getElementById('room-info'),
+                copyRoomBtn: document.getElementById('copy-room-btn'),
+                toast: document.getElementById('toast'),
+                toastMessage: document.getElementById('toast-message'),
+                toastErrorMessage: document.getElementById('toast-error-message'),
+                themeSelector: document.getElementById('theme-selector')
+            };
+
+            // --- Helper Functions ---
+
+            // Basic Debounce
+            function debounce(func, wait) {
+                let timeout;
+                return function executedFunction(...args) {
+                    const later = () => {
+                        clearTimeout(timeout);
+                        func(...args);
+                    };
+                    clearTimeout(timeout);
+                    timeout = setTimeout(later, wait);
+                };
+            }
+
+            // Show toast notification
+            function showToast(message, isError = false, duration = 3000) {
+                const alertSuccess = elements.toast.querySelector('.alert-success');
+                const alertError = elements.toast.querySelector('.alert-error');
+
+                if (isError) {
+                    elements.toastErrorMessage.textContent = message;
+                    alertError.classList.remove('hidden');
+                    alertSuccess.classList.add('hidden');
+                } else {
+                    elements.toastMessage.textContent = message;
+                    alertSuccess.classList.remove('hidden');
+                    alertError.classList.add('hidden');
+                }
+
+                setTimeout(() => {
+                    alertSuccess.classList.add('hidden');
+                    alertError.classList.add('hidden');
+                }, duration);
+            }
+
+            // Format timestamp
+            function formatTime(isoString) {
+                if (!isoString) return '';
+                try {
+                    const date = new Date(isoString);
+                    // Use browser's default locale for time formatting
+                    return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                } catch (e) {
+                    console.error("Error formatting time:", e);
+                    return '';
+                }
+            }
+
+            // Sanitize HTML content before inserting
+            function sanitize(text) {
+                const element = document.createElement('div');
+                element.innerText = text;
+                return element.innerHTML;
+            }
+
+            // Add message to chat display
+            function addMessageToChatDOM(message) {
+                // Determine if the message is from the current user (or AI)
+                const currentUser = elements.usernameInput.value.trim();
+                const isUser = message.role === 'user';
+                const isOwnMessage = isUser && message.username === currentUser;
+                const align = isUser ? 'chat-end' : 'chat-start';
+                // Use different bubble colors for own messages, other users, and AI
+                let bubbleColor = 'chat-bubble-secondary'; // Default for AI
+                if (isUser) {
+                    bubbleColor = isOwnMessage ? 'chat-bubble-primary' : 'chat-bubble-accent'; // Different color for other users
+                }
+
+                const time = formatTime(message.timestamp);
+                const username = sanitize(message.username || (isUser ? 'User' : 'AI Assistant'));
+                const content = sanitize(message.content || message.message || message.reply); // Handle different potential keys
+
+                const messageElement = document.createElement('div');
+                messageElement.className = `chat ${align} mb-2`;
+                messageElement.innerHTML = `
+                    <div class="chat-header text-xs opacity-70">
+                        ${username}
+                        ${time ? `<time class="ml-1">${time}</time>` : ''}
+                    </div>
+                    <div class="chat-bubble ${bubbleColor}">${content}</div>
+                `;
+                elements.chatBox.appendChild(messageElement);
+            }
+
+            // Scroll chat box to bottom
+            function scrollToBottom() {
+                elements.chatBox.scrollTop = elements.chatBox.scrollHeight;
+            }
+
+            // Add typing indicator
+            function addTypingIndicator() {
+                if (document.getElementById('typing-indicator')) return; // Don't add if exists
+                const indicator = document.createElement('div');
+                indicator.id = 'typing-indicator';
+                indicator.className = 'chat chat-start mb-2';
+                indicator.innerHTML = `
+                    <div class="chat-header text-xs opacity-70">AI Assistant</div>
+                    <div class="chat-bubble chat-bubble-secondary typing-indicator">
+                         <span></span><span></span><span></span>
+                    </div>
+                `;
+                elements.chatBox.appendChild(indicator);
+                scrollToBottom();
+            }
+
+            // Remove typing indicator
+            function removeTypingIndicator() {
+                const indicator = document.getElementById('typing-indicator');
+                if (indicator) {
+                    indicator.remove();
+                }
+            }
+
+            // --- Core Logic ---
+
+            // Load chat history and update display (used by initial load and polling)
+            async function fetchAndUpdateHistory() {
+                if (!currentRoomId || document.hidden) return; // Don't fetch if no room or tab hidden
+
+                try {
+                    const response = await fetch(`/api/chat/${currentRoomId}/messages`);
+                    if (!response.ok) {
+                        // Handle room not found or other errors
+                        if (response.status === 404) {
+                            showToast("Chat room not found. Redirecting...", true, 4000);
+                            stopPolling();
+                            // Redirect to home after a delay
+                            setTimeout(() => window.location.href = '/', 4000);
+                        } else {
+                            console.error(`Failed to fetch messages: ${response.status}`);
+                            // Maybe show a temporary error in chat? For now, just log.
+                        }
+                        return; // Stop processing on error
+                    }
+
+                    const data = await response.json();
+                    const history = data.messages || [];
+
+                    // Only append messages that haven't been displayed yet
+                    const newMessages = history.slice(displayedMessagesCount);
+                    if (newMessages.length > 0) {
+                        const shouldScroll = elements.chatBox.scrollTop + elements.chatBox.clientHeight >= elements.chatBox.scrollHeight - 50; // Check if near bottom before adding
+
+                        newMessages.forEach(msg => {
+                            addMessageToChatDOM(msg);
+                        });
+                        displayedMessagesCount = history.length; // Update the count
+
+                        if (shouldScroll) {
+                            scrollToBottom();
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error fetching chat history:", error);
+                    // Consider adding a visual indicator for connection issues
+                }
+            }
+
+            // Start polling for new messages
+            function startPolling() {
+                stopPolling(); // Clear any existing interval first
+                // Fetch immediately first time
+                fetchAndUpdateHistory();
+                pollIntervalId = setInterval(fetchAndUpdateHistory, POLLING_INTERVAL);
+                console.log(`Polling started for room ${currentRoomId}`);
+            }
+
+            // Stop polling
+            function stopPolling() {
+                if (pollIntervalId) {
+                    clearInterval(pollIntervalId);
+                    pollIntervalId = null;
+                    console.log("Polling stopped.");
+                }
+            }
+
+
+            // Send message function
+            const sendMessage = debounce(async () => {
+                const messageText = elements.messageInput.value.trim();
+                const username = elements.usernameInput.value.trim() || 'User'; // Use 'User' if empty
+
+                if (!messageText || !currentRoomId) return;
+
+                // Save username
+                localStorage.setItem('username', username);
+                elements.usernameInput.value = username; // Ensure display matches saved value
+
+                // Disable input/button during sending
+                elements.messageInput.disabled = true;
+                elements.sendBtn.disabled = true;
+                elements.sendBtn.classList.add("loading");
+
+                // Optimistic UI update (optional, can rely solely on polling)
+                // addMessageToChatDOM({ role: 'user', content: messageText, username: username, timestamp: new Date().toISOString() });
+                // scrollToBottom();
+
+                // Show typing indicator immediately after user sends
+                addTypingIndicator();
+
+                try {
+                    const response = await fetch(`/api/chat/${currentRoomId}/message`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: messageText, username: username })
+                    });
+
+                    // Always remove typing indicator once response received (success or error)
+                    removeTypingIndicator();
+
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({ detail: "Unknown server error" }));
+                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                    }
+
+                    // Success! AI response details are in the JSON, but we let polling handle display
+                    // const data = await response.json();
+                    // console.log("AI response received:", data); // We get AI reply details here
+                    // addMessageToChatDOM(data); // Could display AI reply immediately
+                    // scrollToBottom();
+                    // displayedMessagesCount += 2; // Increment count if displaying immediately (user+AI)
+
+                    // Clear input ONLY on successful send
+                    elements.messageInput.value = '';
+
+
+                } catch (error) {
+                    removeTypingIndicator(); // Ensure removal on error too
+                    console.error('Error sending message:', error);
+                    showToast(`Error: ${error.message}`, true, 5000);
+                    // Don't clear input on error, let user retry
+                } finally {
+                    // Re-enable input/button
+                    elements.messageInput.disabled = false;
+                    elements.sendBtn.disabled = false;
+                    elements.sendBtn.classList.remove("loading");
+                    elements.messageInput.focus(); // Focus input back
+                    // Force a history fetch soon after sending to get confirmation/AI reply quickly
+                    setTimeout(fetchAndUpdateHistory, 200); // Fetch shortly after send attempt
+                }
+            }, 200); // Debounce send clicks slightly
+
+            // --- Event Listeners ---
+
+            // Theme selection
+            elements.themeSelector.addEventListener('click', (e) => {
+                if (e.target.tagName === 'A') {
+                    const theme = e.target.getAttribute('data-set-theme');
+                    if (theme) {
+                        document.documentElement.setAttribute('data-theme', theme);
+                        localStorage.setItem('theme', theme);
+                    }
+                }
+            });
+
+            // Create room
+            elements.createRoomBtn.addEventListener('click', async () => {
+                elements.createRoomBtn.classList.add("loading", "btn-disabled");
+                try {
+                    const response = await fetch('/api/create_room', { method: 'POST' });
+                    if (!response.ok) {
+                        throw new Error(`Server error: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    window.location.href = `/chat/${data.room_id}`; // Navigate to the new room
+                } catch (error) {
+                    console.error('Error creating room:', error);
+                    showToast('Failed to create room. Please try again.', true, 5000);
+                    elements.createRoomBtn.classList.remove("loading", "btn-disabled");
+                }
+            });
+
+            // Join room via button
+            elements.joinRoomBtn.addEventListener('click', () => {
+                const roomIdToJoin = elements.joinRoomInput.value.trim();
+                if (roomIdToJoin) {
+                    window.location.href = `/chat/${roomIdToJoin}`;
+                } else {
+                    showToast("Please enter a Room ID.", true);
+                }
+            });
+
+            // Join room via Enter key
+            elements.joinRoomInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    elements.joinRoomBtn.click(); // Trigger button click
+                }
+            });
+
+            // Copy room URL
+            elements.copyRoomBtn.addEventListener('click', () => {
+                const roomUrl = window.location.href;
+                navigator.clipboard.writeText(roomUrl)
+                    .then(() => {
+                        showToast('Room URL copied!');
+                    })
+                    .catch(err => {
+                        console.error('Could not copy text: ', err);
+                        showToast('Failed to copy URL.', true);
+                    });
+            });
+
+            // Send button click
+            elements.sendBtn.addEventListener('click', sendMessage);
+
+            // Message input Enter key press
+            elements.messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline (though input is single line)
+                    e.preventDefault(); // Prevent default form submission/newline
+                    sendMessage();
+                }
+            });
+
+            // Save username when input loses focus
+            elements.usernameInput.addEventListener('blur', () => {
+                const username = elements.usernameInput.value.trim();
+                if (username) {
+                    localStorage.setItem('username', username);
+                }
+            });
+
+            // Handle browser back/forward navigation
+            window.addEventListener('popstate', initialize);
+
+            // Handle visibility change to stop/start polling
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    // Tab became hidden, maybe stop polling? Or just let fetchAndUpdateHistory handle it.
+                    // stopPolling(); // Option: explicitly stop polling when hidden
+                } else {
+                    // Tab became visible, fetch immediately and restart polling if needed
+                    if (currentRoomId && !pollIntervalId) {
+                        console.log("Tab became visible, resuming polling.");
+                        startPolling();
+                    } else if (currentRoomId) {
+                        // Polling might already be running, but fetch immediately for fresh data
+                        fetchAndUpdateHistory();
+                    }
+                }
+            });
+
+            // --- Initialization ---
+            function initialize() {
+                console.log("Initializing UI...");
+                // Stop any previous polling
+                stopPolling();
+                displayedMessagesCount = 0; // Reset message counter on init
+                elements.chatBox.innerHTML = ''; // Clear chat box
+
+                // Load saved theme
+                const savedTheme = localStorage.getItem('theme') || 'dark'; // Default to dark
+                document.documentElement.setAttribute('data-theme', savedTheme);
+
+                // Load saved username
+                const savedUsername = localStorage.getItem('username');
+                if (savedUsername) {
+                    elements.usernameInput.value = savedUsername;
+                }
+
+                // Check URL path for room ID
+                const pathParts = window.location.pathname.split('/');
+                currentRoomId = null;
+                if (pathParts.length >= 3 && pathParts[1] === 'chat' && pathParts[2]) {
+                    currentRoomId = pathParts[2];
+                }
+
+                if (currentRoomId) {
+                    // We're in a chat room
+                    console.log(`Entering room: ${currentRoomId}`);
+                    elements.welcomeScreen.classList.add('hidden');
+                    elements.chatContainer.classList.remove('hidden');
+                    elements.roomIdDisplay.textContent = currentRoomId;
+                    elements.roomInfo.classList.remove('hidden'); // Show room info in navbar
+
+                    // Start polling for this room
+                    startPolling();
+
+                    elements.messageInput.focus();
+                } else {
+                    // We're on the home/welcome screen
+                    console.log("On welcome screen.");
+                    elements.welcomeScreen.classList.remove('hidden');
+                    elements.chatContainer.classList.add('hidden');
+                    elements.roomInfo.classList.add('hidden'); // Hide room info in navbar
+                }
+            }
+
+            // Run initialization
+            initialize();
+        });
+    </script>
+</body>
+
+</html>

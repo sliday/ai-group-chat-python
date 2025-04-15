@@ -56,6 +56,13 @@
             }
         }
 
+        /* Custom spinner size for buttons */
+        .btn.loading:before {
+            width: 1em;
+            height: 1em;
+            border-width: 2px;
+        }
+
         /* Ensure body takes full height for footer potentially */
         body {
             display: flex;
@@ -108,28 +115,42 @@
         }
 
         /* Add styles for markdown content */
-        .chat-bubble.has-markdown {
+        .chat-bubble {
+            max-width: 80%;
+            overflow-wrap: break-word;
+            font-size: 1rem;
+        }
+
+        .markdown-content {
             padding: 0;
             overflow: hidden;
+            font-size: inherit;
         }
 
-        .chat-bubble.has-markdown .prose {
-            padding: 1rem;
+        .markdown-content .prose {
+            padding: 0;
             max-width: none;
             overflow-x: auto;
+            font-size: inherit;
         }
 
-        .chat-bubble.has-markdown .prose pre {
+        .markdown-content .prose p {
+            margin: 0.5em 0;
+            font-size: inherit;
+        }
+
+        .markdown-content .prose pre {
             margin: 0.5em 0;
             padding: 0.5em;
             border-radius: 0.25em;
+            background: rgba(0, 0, 0, 0.1);
         }
 
-        .chat-bubble.has-markdown .prose p:first-child {
+        .markdown-content .prose p:first-child {
             margin-top: 0;
         }
 
-        .chat-bubble.has-markdown .prose p:last-child {
+        .markdown-content .prose p:last-child {
             margin-bottom: 0;
         }
     </style>
@@ -219,6 +240,7 @@
                 <input id="message-input" type="text" class="input input-bordered join-item flex-grow"
                     placeholder="Type your message and press Enter..." />
                 <button id="send-btn" class="btn btn-primary join-item w-auto px-6">Send</button>
+                <button id="stop-btn" class="btn btn-warning join-item w-auto px-6 hidden">Stop</button>
             </div>
         </div>
     </div>
@@ -230,6 +252,9 @@
         </div>
         <div class="alert alert-error hidden">
             <span id="toast-error-message"></span>
+        </div>
+        <div class="alert alert-info hidden">
+            <span id="toast-info-message"></span>
         </div>
     </div>
 
@@ -244,6 +269,7 @@
             let currentRoomId = null;
             let username = '';
             const PRESENCE_INTERVAL = 10000;
+            let currentAbortController = null;
 
             // Replace animal emojis with regular names
             const ANIMAL_NAMES = [
@@ -275,6 +301,7 @@
                 messageInput: document.getElementById('message-input'),
                 usernameInput: document.getElementById('username-input'),
                 sendBtn: document.getElementById('send-btn'),
+                stopBtn: document.getElementById('stop-btn'),
                 createRoomBtn: document.getElementById('create-room-btn'),
                 joinRoomBtn: document.getElementById('join-room-btn'),
                 joinRoomInput: document.getElementById('join-room-input'),
@@ -284,6 +311,7 @@
                 toast: document.getElementById('toast'),
                 toastMessage: document.getElementById('toast-message'),
                 toastErrorMessage: document.getElementById('toast-error-message'),
+                toastInfoMessage: document.getElementById('toast-info-message'),
                 themeSelector: document.getElementById('theme-selector'),
                 activeUsers: document.getElementById('active-users'),
                 userCount: document.getElementById('user-count'),
@@ -305,23 +333,30 @@
             }
 
             // Show toast notification
-            function showToast(message, isError = false, duration = 3000) {
+            function showToast(message, isError = false, duration = 3000, isInfo = false) {
                 const alertSuccess = elements.toast.querySelector('.alert-success');
                 const alertError = elements.toast.querySelector('.alert-error');
+                const alertInfo = elements.toast.querySelector('.alert-info');
+
+                alertSuccess.classList.add('hidden');
+                alertError.classList.add('hidden');
+                alertInfo.classList.add('hidden');
 
                 if (isError) {
                     elements.toastErrorMessage.textContent = message;
                     alertError.classList.remove('hidden');
-                    alertSuccess.classList.add('hidden');
+                } else if (isInfo) {
+                    elements.toastInfoMessage.textContent = message;
+                    alertInfo.classList.remove('hidden');
                 } else {
                     elements.toastMessage.textContent = message;
                     alertSuccess.classList.remove('hidden');
-                    alertError.classList.add('hidden');
                 }
 
                 setTimeout(() => {
                     alertSuccess.classList.add('hidden');
                     alertError.classList.add('hidden');
+                    alertInfo.classList.add('hidden');
                 }, duration);
             }
 
@@ -453,12 +488,12 @@
                 }
             }
 
-            // Update the sendMessage function to handle streaming
+            // Update the sendMessage function
             const sendMessage = debounce(async () => {
                 const messageText = elements.messageInput.value.trim();
                 const username = elements.usernameInput.value.trim() || 'User';
 
-                if (!messageText || !currentRoomId) return;
+                if (!messageText || !currentRoomId || currentAbortController) return;
 
                 localStorage.setItem('username', username);
                 elements.usernameInput.value = username;
@@ -466,6 +501,11 @@
                 elements.messageInput.disabled = true;
                 elements.sendBtn.disabled = true;
                 elements.sendBtn.classList.add("loading");
+                elements.stopBtn.classList.remove('hidden');
+                elements.stopBtn.disabled = false;
+                currentAbortController = new AbortController();
+                
+                let aiMessageElement = null;
 
                 // Add user message immediately
                 const userMessageElement = document.createElement('div');
@@ -480,10 +520,7 @@
                 elements.chatBox.appendChild(userMessageElement);
                 scrollToBottom();
 
-                // Clear input immediately after showing the message
                 elements.messageInput.value = '';
-
-                // Add typing indicator for AI response
                 addTypingIndicator();
 
                 try {
@@ -494,7 +531,8 @@
                             message: messageText, 
                             username: username,
                             fingerprint: userFingerprint
-                        })
+                        }),
+                        signal: currentAbortController.signal
                     });
 
                     if (!response.ok) {
@@ -516,29 +554,37 @@
                         // Handle streaming response
                         const reader = response.body.getReader();
                         const decoder = new TextDecoder();
-                        let aiMessageElement = null;
                         let aiMessageContent = '';
 
                         while (true) {
                             const { value, done } = await reader.read();
+                            
+                            if (currentAbortController?.signal.aborted) break;
+                            
                             if (done) break;
 
                             const chunk = decoder.decode(value);
                             const lines = chunk.split('\n');
 
                             for (const line of lines) {
+                                if (currentAbortController?.signal.aborted) break;
+                                
                                 if (line.startsWith('data: ')) {
-                                    const data = line.slice(5);
-                                    if (data === '[DONE]') {
-                                        removeTypingIndicator();
+                                    const data = line.slice(5).trim();
+                                    if (!data || data === '[DONE]') {
+                                        if (data === '[DONE]') removeTypingIndicator();
                                         continue;
                                     }
 
                                     try {
-                                        const { content, timestamp } = JSON.parse(data);
+                                        const parsedData = JSON.parse(data);
+                                        if (parsedData.error) {
+                                            throw new Error(parsedData.error);
+                                        }
+                                        
+                                        const { content, timestamp } = parsedData;
                                         
                                         if (!aiMessageElement) {
-                                            // Create AI message element on first chunk
                                             removeTypingIndicator();
                                             aiMessageElement = document.createElement('div');
                                             aiMessageElement.className = 'chat chat-start mb-2';
@@ -547,38 +593,64 @@
                                                     AI Assistant
                                                     <time class="ml-1">${formatTime(timestamp)}</time>
                                                 </div>
-                                                <div class="chat-bubble chat-bubble-secondary has-markdown">
-                                                    <div class="prose prose-sm dark:prose-invert"></div>
+                                                <div class="chat-bubble chat-bubble-primary text-base max-w-[80%]">
+                                                    <div class="break-words">
+                                                        <div class="prose dark:prose-invert">${marked.parse(content, { breaks: true, gfm: true })}</div>
+                                                    </div>
                                                 </div>
                                             `;
                                             elements.chatBox.appendChild(aiMessageElement);
                                         }
 
-                                        // Update message content
                                         aiMessageContent += content;
                                         const bubbleElement = aiMessageElement.querySelector('.prose');
-                                        bubbleElement.innerHTML = marked.parse(aiMessageContent, { breaks: true, gfm: true });
-                                        scrollToBottom();
+                                        if (bubbleElement) {
+                                            bubbleElement.innerHTML = marked.parse(aiMessageContent, { breaks: true, gfm: true });
+                                            scrollToBottom();
+                                        }
                                     } catch (e) {
-                                        console.error('Error parsing streaming data:', e);
+                                        // Only show error for non-[DONE] messages
+                                        if (data !== '[DONE]') {
+                                            console.error('Error parsing streaming data or backend error:', e, 'Raw data:', data);
+                                            showToast(`Error from AI: ${e.message}`, true, 5000);
+                                            currentAbortController?.abort();
+                                            break;
+                                        }
                                     }
                                 }
                             }
+                            
+                            if (currentAbortController?.signal.aborted) break;
                         }
                     }
                 } catch (error) {
                     removeTypingIndicator();
-                    console.error('Error sending message:', error);
-                    showToast(`Error: ${error.message}`, true, 5000);
+                    if (error.name === 'AbortError') {
+                        console.log('Stream cancelled by user.');
+                        showToast('Request cancelled.', false, 3000, true);
+                        aiMessageElement?.remove();
+                    } else {
+                        console.error('Error sending message:', error);
+                        showToast(`Error: ${error.message}`, true, 5000);
+                    }
                 } finally {
                     elements.messageInput.disabled = false;
                     elements.sendBtn.disabled = false;
                     elements.sendBtn.classList.remove("loading");
+                    elements.stopBtn.classList.add('hidden');
+                    elements.stopBtn.disabled = true;
+                    currentAbortController = null;
                     elements.messageInput.focus();
                 }
             }, 200);
 
-            // --- Event Listeners ---
+            // Event Listener for Stop Button
+            elements.stopBtn.addEventListener('click', () => {
+                if (currentAbortController) {
+                    currentAbortController.abort();
+                    console.log("Abort signal sent.");
+                }
+            });
 
             // Theme selection
             elements.themeSelector.addEventListener('click', (e) => {
@@ -770,6 +842,9 @@
             function initialize() {
                 console.log("Initializing UI...");
                 elements.chatBox.innerHTML = ''; // Clear chat box
+                elements.stopBtn.classList.add('hidden');
+                elements.stopBtn.disabled = true;
+                currentAbortController = null;
 
                 // Load saved theme
                 const savedTheme = localStorage.getItem('theme') || 'dark'; // Default to dark

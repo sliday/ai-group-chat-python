@@ -399,9 +399,7 @@ async def post_message(room_id: str, payload: MessagePayload, request: Request):
                                         if content:
                                             full_content += content
                                             # Yield each chunk as a JSON event
-                                            yield f"data: {json.dumps({'content': content, 'timestamp': assistant_timestamp})}
-
-"
+                                            yield f"data: {json.dumps({'content': content, 'timestamp': assistant_timestamp})}\n\n"
                             except json.JSONDecodeError:
                                 logger.warning(f"Failed to decode JSON chunk: {line}")
                                 continue
@@ -412,21 +410,15 @@ async def post_message(room_id: str, payload: MessagePayload, request: Request):
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error during streaming request: {e.response.status_code} - {e.response.text}")
             error_msg = json.dumps({"error": f"AI service error: {e.response.status_code}"})
-            yield f"data: {error_msg}
-
-"
+            yield f"data: {error_msg}\n\n"
         except httpx.RequestError as e:
             logger.error(f"Request error during streaming: {e}")
             error_msg = json.dumps({"error": "Failed to connect to AI service"})
-            yield f"data: {error_msg}
-
-"
+            yield f"data: {error_msg}\n\n"
         except Exception as e:
             logger.error(f"Unexpected error during AI response generation: {e}", exc_info=True)
             error_msg = json.dumps({"error": "An unexpected error occurred"})
-            yield f"data: {error_msg}
-
-"
+            yield f"data: {error_msg}\n\n"
         finally:
              # Check if client is still connected before proceeding
             if not await request.is_disconnected():
@@ -442,9 +434,7 @@ async def post_message(room_id: str, payload: MessagePayload, request: Request):
                     logger.info(f"Room {room_id} - AI: {full_content[:80]}...")
                 # Send a completion event even if there was an error or disconnect earlier
                 # Client needs this to know the stream ended server-side
-                yield f"data: [DONE]
-
-"
+                yield f"data: [DONE]\n\n"
             else:
                 logger.info(f"Stream for room {room_id} ended due to client disconnect. Not saving final message.")
 

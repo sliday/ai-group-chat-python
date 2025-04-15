@@ -11,6 +11,40 @@
     <!-- Add Emoji Mart -->
     <script src="https://cdn.jsdelivr.net/npm/@emoji-mart/data@latest/sets/14/native.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/emoji-mart@latest/dist/browser.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    typography: {
+                        DEFAULT: {
+                            css: {
+                                color: 'inherit',
+                                a: {
+                                    color: 'inherit',
+                                    '&:hover': {
+                                        color: 'inherit',
+                                    },
+                                },
+                                h1: { color: 'inherit' },
+                                h2: { color: 'inherit' },
+                                h3: { color: 'inherit' },
+                                h4: { color: 'inherit' },
+                                code: { color: 'inherit' },
+                                pre: { 
+                                    backgroundColor: 'rgba(0,0,0,0.1)',
+                                    color: 'inherit'
+                                },
+                                strong: { color: 'inherit' },
+                                blockquote: { color: 'inherit' },
+                            }
+                        }
+                    }
+                }
+            },
+            plugins: [require('@tailwindcss/typography')],
+        }
+    </script>
     <style>
         #chat-box {
             scroll-behavior: smooth;
@@ -104,6 +138,32 @@
         .reaction-count {
             margin-left: 4px;
             font-size: 0.75rem;
+        }
+
+        /* Add styles for markdown content */
+        .chat-bubble.has-markdown {
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .chat-bubble.has-markdown .prose {
+            padding: 1rem;
+            max-width: none;
+            overflow-x: auto;
+        }
+
+        .chat-bubble.has-markdown .prose pre {
+            margin: 0.5em 0;
+            padding: 0.5em;
+            border-radius: 0.25em;
+        }
+
+        .chat-bubble.has-markdown .prose p:first-child {
+            margin-top: 0;
+        }
+
+        .chat-bubble.has-markdown .prose p:last-child {
+            margin-bottom: 0;
         }
     </style>
 </head>
@@ -340,22 +400,30 @@
 
                 const time = formatTime(message.timestamp);
                 const username = sanitize(message.username || (isUser ? 'User' : 'AI Assistant'));
-                const content = sanitize(message.content || message.message || message.reply);
+                const content = message.content || message.message || message.reply;
 
                 const messageElement = document.createElement('div');
                 messageElement.className = `chat ${align} mb-2`;
                 
                 if (isSystem) {
                     messageElement.innerHTML = `
-                        <div class="chat-bubble ${bubbleColor} text-sm italic">${content}</div>
+                        <div class="chat-bubble ${bubbleColor} text-sm italic">${sanitize(content)}</div>
                     `;
                 } else {
+                    // Check if content contains potential Markdown
+                    const hasMarkdown = /[*#`\[\]_~]/.test(content);
+                    const processedContent = hasMarkdown ? 
+                        marked.parse(content, { breaks: true, gfm: true }) : 
+                        sanitize(content);
+
                     messageElement.innerHTML = `
                         <div class="chat-header text-xs opacity-70">
                             ${username}
                             ${time ? `<time class="ml-1">${time}</time>` : ''}
                         </div>
-                        <div class="chat-bubble ${bubbleColor}">${content}</div>
+                        <div class="chat-bubble ${bubbleColor} ${hasMarkdown ? 'has-markdown' : ''}">
+                            ${hasMarkdown ? `<div class="prose prose-sm dark:prose-invert">${processedContent}</div>` : processedContent}
+                        </div>
                     `;
                 }
                 
@@ -455,7 +523,7 @@
             }
 
 
-            // Send message function
+            // Update the sendMessage function to handle streaming
             const sendMessage = debounce(async () => {
                 const messageText = elements.messageInput.value.trim();
                 const username = elements.usernameInput.value.trim() || 'User';
@@ -469,6 +537,23 @@
                 elements.sendBtn.disabled = true;
                 elements.sendBtn.classList.add("loading");
 
+                // Add user message immediately
+                const userMessageElement = document.createElement('div');
+                userMessageElement.className = 'chat chat-end mb-2';
+                userMessageElement.innerHTML = `
+                    <div class="chat-header text-xs opacity-70">
+                        ${sanitize(username)}
+                        <time class="ml-1">${formatTime(new Date().toISOString())}</time>
+                    </div>
+                    <div class="chat-bubble chat-bubble-primary">${sanitize(messageText)}</div>
+                `;
+                elements.chatBox.appendChild(userMessageElement);
+                scrollToBottom();
+
+                // Clear input immediately after showing the message
+                elements.messageInput.value = '';
+
+                // Add typing indicator for AI response
                 addTypingIndicator();
 
                 try {
@@ -482,9 +567,8 @@
                         })
                     });
 
-                    removeTypingIndicator();
-
                     if (!response.ok) {
+                        removeTypingIndicator();
                         const errorData = await response.json();
                         
                         if (response.status === 403 && errorData.detail.startsWith('Banned:')) {
@@ -495,14 +579,63 @@
                             return;
                         } else if (response.status === 400 && errorData.detail.startsWith('Message deleted:')) {
                             showToast(`Message not sent: ${errorData.detail}`, true);
-                            elements.messageInput.value = '';
                         } else {
                             throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
                         }
                     } else {
-                        elements.messageInput.value = '';
-                    }
+                        // Handle streaming response
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let aiMessageElement = null;
+                        let aiMessageContent = '';
 
+                        while (true) {
+                            const { value, done } = await reader.read();
+                            if (done) break;
+
+                            const chunk = decoder.decode(value);
+                            const lines = chunk.split('\n');
+
+                            for (const line of lines) {
+                                if (line.startsWith('data: ')) {
+                                    const data = line.slice(5);
+                                    if (data === '[DONE]') {
+                                        removeTypingIndicator();
+                                        continue;
+                                    }
+
+                                    try {
+                                        const { content, timestamp } = JSON.parse(data);
+                                        
+                                        if (!aiMessageElement) {
+                                            // Create AI message element on first chunk
+                                            removeTypingIndicator();
+                                            aiMessageElement = document.createElement('div');
+                                            aiMessageElement.className = 'chat chat-start mb-2';
+                                            aiMessageElement.innerHTML = `
+                                                <div class="chat-header text-xs opacity-70">
+                                                    AI Assistant
+                                                    <time class="ml-1">${formatTime(timestamp)}</time>
+                                                </div>
+                                                <div class="chat-bubble chat-bubble-secondary has-markdown">
+                                                    <div class="prose prose-sm dark:prose-invert"></div>
+                                                </div>
+                                            `;
+                                            elements.chatBox.appendChild(aiMessageElement);
+                                        }
+
+                                        // Update message content
+                                        aiMessageContent += content;
+                                        const bubbleElement = aiMessageElement.querySelector('.prose');
+                                        bubbleElement.innerHTML = marked.parse(aiMessageContent, { breaks: true, gfm: true });
+                                        scrollToBottom();
+                                    } catch (e) {
+                                        console.error('Error parsing streaming data:', e);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 } catch (error) {
                     removeTypingIndicator();
                     console.error('Error sending message:', error);
@@ -512,7 +645,6 @@
                     elements.sendBtn.disabled = false;
                     elements.sendBtn.classList.remove("loading");
                     elements.messageInput.focus();
-                    setTimeout(fetchAndUpdateHistory, 200);
                 }
             }, 200);
 

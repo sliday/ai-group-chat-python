@@ -6,10 +6,11 @@ import logging
 from uuid import uuid4
 from typing import Dict, List, Any, Optional, Set
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from datetime import datetime
+import asyncio
 
 # --- Configuration & Setup ---
 load_dotenv()  # Load environment variables from .env file
@@ -312,10 +313,7 @@ async def post_message(room_id: str, payload: MessagePayload):
     
     if moderation_result["is_inappropriate"]:
         if moderation_result["action"] == "ban":
-            # Ban the user by fingerprint
             ban_user(room_id, username, payload.fingerprint)
-            
-            # Add system message about ban
             system_message = {
                 "role": "system",
                 "content": f"User '{username}' has been banned for inappropriate behavior: {moderation_result['reason']}",
@@ -323,11 +321,9 @@ async def post_message(room_id: str, payload: MessagePayload):
                 "timestamp": datetime.now().isoformat()
             }
             chats[room_id].append(system_message)
-            
             raise HTTPException(status_code=403, detail=f"Banned: {moderation_result['reason']}")
         
         if moderation_result["action"] == "delete":
-            # Add a placeholder message with reason
             deleted_message = {
                 "role": "system",
                 "content": f"[Message deleted by moderator - Reason: {moderation_result['reason']}]",
@@ -335,13 +331,11 @@ async def post_message(room_id: str, payload: MessagePayload):
                 "timestamp": datetime.now().isoformat()
             }
             chats[room_id].append(deleted_message)
-            
             raise HTTPException(status_code=400, detail=f"Message deleted: {moderation_result['reason']}")
 
     timestamp = datetime.now().isoformat()
 
-    # If we get here, the message is appropriate - proceed with normal message handling
-    # Add user message to history (with metadata)
+    # Add user message to history
     user_message_entry = {
         "role": "user",
         "content": user_message_content,
@@ -351,71 +345,76 @@ async def post_message(room_id: str, payload: MessagePayload):
     chats[room_id].append(user_message_entry)
     logger.info(f"Room {room_id} - User '{username}': {user_message_content}")
 
-    # Prepare messages for OpenRouter API (strip our metadata)
+    # Prepare messages for OpenRouter API
     api_messages = [
         {"role": msg["role"], "content": msg["content"]}
-        for msg in chats[room_id] # Send the full history for context
-        if msg.get("role") in ["user", "assistant"] # Ensure only valid roles sent
+        for msg in chats[room_id]
+        if msg.get("role") in ["user", "assistant"]
     ]
 
-    # --- Call OpenRouter API ---
-    try:
-        api_payload = {
-            "model": "openrouter/auto", # Use auto model selection
-            "messages": api_messages
-        }
-        response = requests.post(
-            url=OPENROUTER_API_URL,
-            headers=get_openrouter_headers(),
-            json=api_payload,
-            timeout=35 # Slightly longer timeout for AI generation
-        )
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-        api_response = response.json()
+    async def generate_response():
+        try:
+            response = requests.post(
+                url=OPENROUTER_API_URL,
+                headers=get_openrouter_headers(),
+                json={
+                    "model": "openai/gpt-4o-mini",
+                    "messages": api_messages,
+                    "max_tokens": 1000,
+                    "stream": True
+                },
+                stream=True,
+                timeout=35
+            )
+            response.raise_for_status()
 
-        # --- Process Response ---
-        if "choices" in api_response and len(api_response["choices"]) > 0:
-            assistant_message_data = api_response["choices"][0].get("message", {})
-            assistant_reply_content = assistant_message_data.get("content", "").strip()
-
-            if not assistant_reply_content:
-                 assistant_reply_content = "Sorry, I received an empty response."
-                 logger.warning(f"Room {room_id} - Received empty AI response. API Raw: {api_response}")
-            
-            # Add assistant response to history (with metadata)
+            # Initialize variables for collecting the streamed response
             assistant_timestamp = datetime.now().isoformat()
-            assistant_message_entry = {
-                "role": assistant_message_data.get("role", "assistant"),
-                "content": assistant_reply_content,
-                "username": "AI Assistant",
-                "timestamp": assistant_timestamp
-            }
-            chats[room_id].append(assistant_message_entry)
-            logger.info(f"Room {room_id} - AI: {assistant_reply_content[:80]}...") # Log snippet
+            full_content = ""
+            
+            # Stream the response chunks
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        # Remove 'data: ' prefix and parse JSON
+                        json_str = line.decode('utf-8').removeprefix('data: ')
+                        if json_str.strip() == '[DONE]':
+                            break
+                        
+                        chunk = json.loads(json_str)
+                        if chunk.get('choices') and len(chunk['choices']) > 0:
+                            delta = chunk['choices'][0].get('delta', {})
+                            if 'content' in delta:
+                                content = delta['content']
+                                full_content += content
+                                # Yield each chunk as a JSON event
+                                yield f"data: {json.dumps({'content': content, 'timestamp': assistant_timestamp})}\n\n"
+                    except json.JSONDecodeError:
+                        continue
 
-            # Return only the AI's message details to the frontend that called POST
-            return JSONResponse(content={
-                "reply": assistant_reply_content,
-                "username": "AI Assistant",
-                "timestamp": assistant_timestamp
-            })
-        else:
-            logger.error(f"Room {room_id} - Unexpected API response structure: {api_response}")
-            # Don't add a failed AI response to history. User message remains.
-            raise HTTPException(status_code=500, detail="Invalid response structure from AI service.")
+            # Save the complete message to chat history
+            if full_content:
+                assistant_message_entry = {
+                    "role": "assistant",
+                    "content": full_content,
+                    "username": "AI Assistant",
+                    "timestamp": assistant_timestamp
+                }
+                chats[room_id].append(assistant_message_entry)
+                logger.info(f"Room {room_id} - AI: {full_content[:80]}...")
 
-    except requests.exceptions.Timeout:
-        logger.error(f"Room {room_id} - API request timed out.")
-        # Don't add a failed AI response to history. User message remains.
-        raise HTTPException(status_code=504, detail="AI service request timed out.")
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Room {room_id} - API request failed: {e}")
-        # Don't add a failed AI response to history. User message remains.
-        raise HTTPException(status_code=503, detail=f"AI service unavailable: {e}")
-    except Exception as e:
-        logger.exception(f"Room {room_id} - Error processing message: {e}") # Log full traceback
-        # Don't add a failed AI response to history. User message remains.
-        raise HTTPException(status_code=500, detail="Internal server error processing message.")
+            # Send a completion event
+            yield f"data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            error_msg = json.dumps({"error": str(e)})
+            yield f"data: {error_msg}\n\n"
+
+    return StreamingResponse(
+        generate_response(),
+        media_type="text/event-stream"
+    )
 
 # --- Run Server (for local development) ---
 if __name__ == "__main__":

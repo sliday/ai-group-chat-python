@@ -38,17 +38,22 @@ chats: Dict[str, List[Dict[str, Any]]] = {}
 # Format: active_users[room_id] = {username1, username2, ...}
 active_users: Dict[str, Set[str]] = {}
 
-# Store banned users per room
-banned_users: Dict[str, Set[str]] = {}
+# Store banned users per room (now using fingerprints)
+banned_fingerprints: Dict[str, Set[str]] = {}
+
+# Store username to fingerprint mapping for moderation
+user_fingerprints: Dict[str, Dict[str, str]] = {}  # room_id -> {username: fingerprint}
 
 # --- Models ---
 class MessagePayload(BaseModel):
     message: str
     username: Optional[str] = "User" # Default username if not provided
+    fingerprint: str
 
 class UserPresencePayload(BaseModel):
     username: str
     action: str  # "join" or "leave"
+    fingerprint: str
 
 # --- Helper Functions ---
 def get_openrouter_headers() -> Dict[str, str]:
@@ -63,25 +68,10 @@ def get_openrouter_headers() -> Dict[str, str]:
     return headers
 
 def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
-    """Check if a message is appropriate using AI."""
+    """Check if a message is appropriate using AI. Returns simple response."""
     moderation_prompt = [
-        {"role": "system", "content": """You are a chat moderator AI. Analyze the message for:
-1. Abusive language
-2. Hate speech
-3. Harassment
-4. Excessive profanity
-5. Threatening content
-6. Spam/flooding
-
-Respond in JSON format:
-{
-    "is_inappropriate": true/false,
-    "reason": "brief explanation if inappropriate",
-    "action": "none" or "delete" or "ban"
-}
-
-Be strict but fair. Only recommend 'ban' for serious violations."""},
-        {"role": "user", "content": f"Message to moderate: {message}"}
+        {"role": "system", "content": """You are a strict chat moderator. If message contains ANY inappropriate content (abuse, hate, threats, excessive profanity, spam), respond with reason in max 10 tokens. If message is fine, respond with "0"."""},
+        {"role": "user", "content": message}
     ]
 
     try:
@@ -89,9 +79,9 @@ Be strict but fair. Only recommend 'ban' for serious violations."""},
             url=OPENROUTER_API_URL,
             headers=get_openrouter_headers(),
             json={
-                "model": "openrouter/auto",
+                "model": "openai/gpt-4-0125-preview",
                 "messages": moderation_prompt,
-                "response_format": { "type": "json_object" }
+                "max_tokens": 10
             },
             timeout=10
         )
@@ -99,17 +89,42 @@ Be strict but fair. Only recommend 'ban' for serious violations."""},
         result = response.json()
         
         if "choices" in result and len(result["choices"]) > 0:
-            try:
-                moderation_result = json.loads(result["choices"][0]["message"]["content"])
-                return moderation_result
-            except json.JSONDecodeError:
-                logger.error("Failed to parse moderation response as JSON")
+            moderation_result = result["choices"][0]["message"]["content"].strip()
+            
+            # Simple response parsing
+            if moderation_result == "0":
                 return {"is_inappropriate": False, "reason": None, "action": "none"}
+            else:
+                # If any non-zero response, treat as inappropriate
+                return {
+                    "is_inappropriate": True,
+                    "reason": moderation_result,
+                    "action": "ban" if any(word in moderation_result.lower() for word in ["threat", "hate", "abuse"]) else "delete"
+                }
         
         return {"is_inappropriate": False, "reason": None, "action": "none"}
     except Exception as e:
         logger.error(f"Moderation check failed: {e}")
         return {"is_inappropriate": False, "reason": None, "action": "none"}
+
+def is_user_banned(room_id: str, fingerprint: str) -> bool:
+    """Check if a user's fingerprint is banned in the room."""
+    return room_id in banned_fingerprints and fingerprint in banned_fingerprints[room_id]
+
+def ban_user(room_id: str, username: str, fingerprint: str):
+    """Ban a user by their fingerprint and remove them from active users."""
+    if room_id not in banned_fingerprints:
+        banned_fingerprints[room_id] = set()
+    banned_fingerprints[room_id].add(fingerprint)
+    
+    # Remove from active users if present
+    if room_id in active_users:
+        active_users[room_id].discard(username)
+    
+    # Log the fingerprint for this username
+    if room_id not in user_fingerprints:
+        user_fingerprints[room_id] = {}
+    user_fingerprints[room_id][username] = fingerprint
 
 # --- API Endpoints ---
 
@@ -148,12 +163,21 @@ async def get_chat_room_page(room_id: str, request: Request):
 # User Presence Management
 @app.post("/api/chat/{room_id}/presence")
 async def update_user_presence(room_id: str, payload: UserPresencePayload):
-    """Updates user presence in a room (join/leave)."""
+    """Updates user presence in a room (join/leave) with fingerprint checking."""
     if room_id not in chats:
         raise HTTPException(status_code=404, detail="Room not found")
     
+    # Check if user is banned
+    if is_user_banned(room_id, payload.fingerprint):
+        raise HTTPException(status_code=403, detail="You have been banned from this chat room")
+    
     if room_id not in active_users:
         active_users[room_id] = set()
+    
+    # Update fingerprint mapping
+    if room_id not in user_fingerprints:
+        user_fingerprints[room_id] = {}
+    user_fingerprints[room_id][payload.username] = payload.fingerprint
     
     if payload.action == "join":
         active_users[room_id].add(payload.username)
@@ -220,23 +244,22 @@ async def post_message(room_id: str, payload: MessagePayload):
     if not user_message_content:
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
-    # Check if user is banned
-    if room_id in banned_users and username in banned_users[room_id]:
+    # Check if user is banned by fingerprint
+    if is_user_banned(room_id, payload.fingerprint):
         raise HTTPException(status_code=403, detail="You have been banned from this chat room")
+
+    # Update fingerprint mapping
+    if room_id not in user_fingerprints:
+        user_fingerprints[room_id] = {}
+    user_fingerprints[room_id][username] = payload.fingerprint
 
     # Moderate the message
     moderation_result = check_message_moderation(user_message_content, username)
     
     if moderation_result["is_inappropriate"]:
         if moderation_result["action"] == "ban":
-            # Ban the user
-            if room_id not in banned_users:
-                banned_users[room_id] = set()
-            banned_users[room_id].add(username)
-            
-            # Remove from active users
-            if room_id in active_users and username in active_users[room_id]:
-                active_users[room_id].remove(username)
+            # Ban the user by fingerprint
+            ban_user(room_id, username, payload.fingerprint)
             
             # Add system message about ban
             system_message = {

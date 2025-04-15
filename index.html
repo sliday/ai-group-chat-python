@@ -85,6 +85,15 @@
                         </svg>
                     </button>
                 </div>
+                <!-- Active Users Count -->
+                <div id="active-users" class="hidden items-center mr-2">
+                    <span class="badge badge-primary badge-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <span id="user-count">0</span> online
+                    </span>
+                </div>
                 <!-- Theme Selector -->
                 <div class="dropdown dropdown-end" id="theme-selector">
                     <button class="btn btn-ghost btn-circle" aria-label="Select Theme">
@@ -98,31 +107,12 @@
                         <li><a data-set-theme="light">Light</a></li>
                         <li><a data-set-theme="dark">Dark</a></li>
                         <li><a data-set-theme="cupcake">Cupcake</a></li>
-                        <li><a data-set-theme="bumblebee">Bumblebee</a></li>
-                        <li><a data-set-theme="emerald">Emerald</a></li>
-                        <li><a data-set-theme="corporate">Corporate</a></li>
                         <li><a data-set-theme="synthwave">Synthwave</a></li>
                         <li><a data-set-theme="retro">Retro</a></li>
                         <li><a data-set-theme="cyberpunk">Cyberpunk</a></li>
                         <li><a data-set-theme="valentine">Valentine</a></li>
-                        <li><a data-set-theme="halloween">Halloween</a></li>
-                        <li><a data-set-theme="garden">Garden</a></li>
-                        <li><a data-set-theme="forest">Forest</a></li>
-                        <li><a data-set-theme="aqua">Aqua</a></li>
-                        <li><a data-set-theme="lofi">Lofi</a></li>
-                        <li><a data-set-theme="pastel">Pastel</a></li>
-                        <li><a data-set-theme="fantasy">Fantasy</a></li>
-                        <li><a data-set-theme="wireframe">Wireframe</a></li>
-                        <li><a data-set-theme="black">Black</a></li>
-                        <li><a data-set-theme="luxury">Luxury</a></li>
                         <li><a data-set-theme="dracula">Dracula</a></li>
-                        <li><a data-set-theme="cmyk">CMYK</a></li>
-                        <li><a data-set-theme="autumn">Autumn</a></li>
-                        <li><a data-set-theme="business">Business</a></li>
-                        <li><a data-set-theme="acid">Acid</a></li>
-                        <li><a data-set-theme="lemonade">Lemonade</a></li>
                         <li><a data-set-theme="night">Night</a></li>
-                        <li><a data-set-theme="coffee">Coffee</a></li>
                         <li><a data-set-theme="winter">Winter</a></li>
                     </ul>
                 </div>
@@ -178,8 +168,32 @@
             // --- State Variables ---
             let currentRoomId = null;
             let pollIntervalId = null;
-            let displayedMessagesCount = 0; // Track displayed messages to avoid duplicates on poll
-            const POLLING_INTERVAL = 3000; // Poll every 3 seconds
+            let displayedMessagesCount = 0;
+            let username = ''; // Track current username
+            const POLLING_INTERVAL = 3000;
+            const PRESENCE_INTERVAL = 10000; // Update presence every 10 seconds
+
+            // Animal emoji list for random names
+            const ANIMAL_EMOJIS = [
+                "🦊", "🐼", "🦁", "🐯", "🐮", "🐷", "🐸", "🐙", "🦄", "🦋",
+                "🐬", "🦈", "🦭", "🦘", "🦒", "🦏", "🐘", "🦛", "🐪", "🐫",
+                "🦍", "🦧", "🐵", "🐶", "🐱", "🐭", "🐹", "🐰", "🐻", "🐨",
+                "🐲", "🦕", "🦖", "🐳", "🦩", "🦦", "🦥", "🦡", "🦨", "🦔"
+            ];
+
+            const ADJECTIVES = [
+                "Happy", "Sleepy", "Clever", "Swift", "Brave", "Wise", "Gentle",
+                "Lucky", "Mighty", "Jolly", "Fancy", "Witty", "Proud", "Calm",
+                "Bright", "Noble", "Kind", "Bold", "Sweet", "Wild", "Cozy",
+                "Merry", "Sunny", "Perky", "Snappy"
+            ];
+
+            // Generate random animal emoji name
+            function generateRandomName() {
+                const randomEmoji = ANIMAL_EMOJIS[Math.floor(Math.random() * ANIMAL_EMOJIS.length)];
+                const randomAdjective = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+                return `${randomAdjective}${randomEmoji}`;
+            }
 
             // --- DOM Elements ---
             const elements = {
@@ -198,7 +212,9 @@
                 toast: document.getElementById('toast'),
                 toastMessage: document.getElementById('toast-message'),
                 toastErrorMessage: document.getElementById('toast-error-message'),
-                themeSelector: document.getElementById('theme-selector')
+                themeSelector: document.getElementById('theme-selector'),
+                activeUsers: document.getElementById('active-users'),
+                userCount: document.getElementById('user-count'),
             };
 
             // --- Helper Functions ---
@@ -259,30 +275,45 @@
 
             // Add message to chat display
             function addMessageToChatDOM(message) {
-                // Determine if the message is from the current user (or AI)
                 const currentUser = elements.usernameInput.value.trim();
                 const isUser = message.role === 'user';
+                const isSystem = message.role === 'system';
                 const isOwnMessage = isUser && message.username === currentUser;
-                const align = isUser ? 'chat-end' : 'chat-start';
-                // Use different bubble colors for own messages, other users, and AI
+                
+                // Determine message alignment and style
+                let align = isUser ? 'chat-end' : 'chat-start';
+                if (isSystem) align = 'chat-middle';
+                
+                // Determine bubble color
                 let bubbleColor = 'chat-bubble-secondary'; // Default for AI
-                if (isUser) {
-                    bubbleColor = isOwnMessage ? 'chat-bubble-primary' : 'chat-bubble-accent'; // Different color for other users
+                if (isSystem) {
+                    bubbleColor = 'chat-bubble-warning'; // Special color for system messages
+                } else if (isUser) {
+                    bubbleColor = isOwnMessage ? 'chat-bubble-primary' : 'chat-bubble-accent';
                 }
 
                 const time = formatTime(message.timestamp);
                 const username = sanitize(message.username || (isUser ? 'User' : 'AI Assistant'));
-                const content = sanitize(message.content || message.message || message.reply); // Handle different potential keys
+                const content = sanitize(message.content || message.message || message.reply);
 
                 const messageElement = document.createElement('div');
                 messageElement.className = `chat ${align} mb-2`;
-                messageElement.innerHTML = `
-                    <div class="chat-header text-xs opacity-70">
-                        ${username}
-                        ${time ? `<time class="ml-1">${time}</time>` : ''}
-                    </div>
-                    <div class="chat-bubble ${bubbleColor}">${content}</div>
-                `;
+                
+                // Special styling for system messages
+                if (isSystem) {
+                    messageElement.innerHTML = `
+                        <div class="chat-bubble ${bubbleColor} text-sm italic">${content}</div>
+                    `;
+                } else {
+                    messageElement.innerHTML = `
+                        <div class="chat-header text-xs opacity-70">
+                            ${username}
+                            ${time ? `<time class="ml-1">${time}</time>` : ''}
+                        </div>
+                        <div class="chat-bubble ${bubbleColor}">${content}</div>
+                    `;
+                }
+                
                 elements.chatBox.appendChild(messageElement);
             }
 
@@ -382,24 +413,19 @@
             // Send message function
             const sendMessage = debounce(async () => {
                 const messageText = elements.messageInput.value.trim();
-                const username = elements.usernameInput.value.trim() || 'User'; // Use 'User' if empty
+                const username = elements.usernameInput.value.trim() || 'User';
 
                 if (!messageText || !currentRoomId) return;
 
                 // Save username
                 localStorage.setItem('username', username);
-                elements.usernameInput.value = username; // Ensure display matches saved value
+                elements.usernameInput.value = username;
 
                 // Disable input/button during sending
                 elements.messageInput.disabled = true;
                 elements.sendBtn.disabled = true;
                 elements.sendBtn.classList.add("loading");
 
-                // Optimistic UI update (optional, can rely solely on polling)
-                // addMessageToChatDOM({ role: 'user', content: messageText, username: username, timestamp: new Date().toISOString() });
-                // scrollToBottom();
-
-                // Show typing indicator immediately after user sends
                 addTypingIndicator();
 
                 try {
@@ -409,40 +435,44 @@
                         body: JSON.stringify({ message: messageText, username: username })
                     });
 
-                    // Always remove typing indicator once response received (success or error)
                     removeTypingIndicator();
 
                     if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({ detail: "Unknown server error" }));
-                        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                        const errorData = await response.json();
+                        
+                        // Handle moderation responses
+                        if (response.status === 403 && errorData.detail.startsWith('Banned:')) {
+                            // User was banned
+                            showToast(`You have been banned: ${errorData.detail}`, true);
+                            // Redirect to home after a short delay
+                            setTimeout(() => {
+                                window.location.href = '/';
+                            }, 3000);
+                            return;
+                        } else if (response.status === 400 && errorData.detail.startsWith('Message deleted:')) {
+                            // Message was deleted
+                            showToast(`Message not sent: ${errorData.detail}`, true);
+                            elements.messageInput.value = ''; // Clear the inappropriate message
+                        } else {
+                            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                        }
+                    } else {
+                        // Message was accepted
+                        elements.messageInput.value = '';
                     }
 
-                    // Success! AI response details are in the JSON, but we let polling handle display
-                    // const data = await response.json();
-                    // console.log("AI response received:", data); // We get AI reply details here
-                    // addMessageToChatDOM(data); // Could display AI reply immediately
-                    // scrollToBottom();
-                    // displayedMessagesCount += 2; // Increment count if displaying immediately (user+AI)
-
-                    // Clear input ONLY on successful send
-                    elements.messageInput.value = '';
-
-
                 } catch (error) {
-                    removeTypingIndicator(); // Ensure removal on error too
+                    removeTypingIndicator();
                     console.error('Error sending message:', error);
                     showToast(`Error: ${error.message}`, true, 5000);
-                    // Don't clear input on error, let user retry
                 } finally {
-                    // Re-enable input/button
                     elements.messageInput.disabled = false;
                     elements.sendBtn.disabled = false;
                     elements.sendBtn.classList.remove("loading");
-                    elements.messageInput.focus(); // Focus input back
-                    // Force a history fetch soon after sending to get confirmation/AI reply quickly
-                    setTimeout(fetchAndUpdateHistory, 200); // Fetch shortly after send attempt
+                    elements.messageInput.focus();
+                    setTimeout(fetchAndUpdateHistory, 200);
                 }
-            }, 200); // Debounce send clicks slightly
+            }, 200);
 
             // --- Event Listeners ---
 
@@ -543,6 +573,93 @@
                 }
             });
 
+            // --- Presence Management ---
+            async function updatePresence(action) {
+                if (!currentRoomId || !username) return;
+                
+                try {
+                    const response = await fetch(`/api/chat/${currentRoomId}/presence`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, action })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        updateUserCount(data.count);
+                    }
+                } catch (error) {
+                    console.error('Error updating presence:', error);
+                }
+            }
+
+            function updateUserCount(count) {
+                elements.userCount.textContent = count;
+            }
+
+            let presenceInterval;
+
+            function startPresenceTracking() {
+                // Initial presence
+                updatePresence('join');
+                
+                // Regular updates
+                presenceInterval = setInterval(() => {
+                    updatePresence('join'); // Refresh presence
+                }, PRESENCE_INTERVAL);
+
+                // Setup leave handling
+                window.addEventListener('beforeunload', () => {
+                    updatePresence('leave');
+                });
+            }
+
+            function stopPresenceTracking() {
+                if (presenceInterval) {
+                    clearInterval(presenceInterval);
+                }
+                if (currentRoomId && username) {
+                    updatePresence('leave');
+                }
+            }
+
+            // --- Room Management ---
+            async function joinRoom(roomId) {
+                try {
+                    // ... existing join room code ...
+                    
+                    // Show active users count
+                    elements.activeUsers.classList.remove('hidden');
+                    elements.activeUsers.classList.add('flex');
+                    
+                    // Start tracking presence
+                    username = elements.usernameInput.value.trim() || 'User';
+                    startPresenceTracking();
+                    
+                } catch (error) {
+                    console.error('Error joining room:', error);
+                    showToast('Failed to join room: ' + error.message, true);
+                }
+            }
+
+            // Update username handling
+            elements.usernameInput.addEventListener('change', () => {
+                const newUsername = elements.usernameInput.value.trim() || 'User';
+                if (username !== newUsername && currentRoomId) {
+                    updatePresence('leave'); // Leave with old username
+                    username = newUsername;
+                    updatePresence('join'); // Join with new username
+                }
+            });
+
+            // Cleanup on room leave/switch
+            function leaveRoom() {
+                stopPresenceTracking();
+                elements.activeUsers.classList.add('hidden');
+                elements.activeUsers.classList.remove('flex');
+                // ... existing room leave code ...
+            }
+
             // --- Initialization ---
             function initialize() {
                 console.log("Initializing UI...");
@@ -555,10 +672,14 @@
                 const savedTheme = localStorage.getItem('theme') || 'dark'; // Default to dark
                 document.documentElement.setAttribute('data-theme', savedTheme);
 
-                // Load saved username
+                // Load saved username or generate new one
                 const savedUsername = localStorage.getItem('username');
                 if (savedUsername) {
                     elements.usernameInput.value = savedUsername;
+                } else {
+                    const randomName = generateRandomName();
+                    elements.usernameInput.value = randomName;
+                    localStorage.setItem('username', randomName);
                 }
 
                 // Check URL path for room ID

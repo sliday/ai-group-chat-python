@@ -4,7 +4,7 @@ import requests
 import json
 import logging
 from uuid import uuid4
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -34,10 +34,21 @@ if not OPENROUTER_API_KEY:
 # Format: chats[room_id] = [{"role": "user" | "assistant", "content": "...", "username": "...", "timestamp": "ISO_FORMAT"}, ...]
 chats: Dict[str, List[Dict[str, Any]]] = {}
 
+# Store active users per room
+# Format: active_users[room_id] = {username1, username2, ...}
+active_users: Dict[str, Set[str]] = {}
+
+# Store banned users per room
+banned_users: Dict[str, Set[str]] = {}
+
 # --- Models ---
 class MessagePayload(BaseModel):
     message: str
     username: Optional[str] = "User" # Default username if not provided
+
+class UserPresencePayload(BaseModel):
+    username: str
+    action: str  # "join" or "leave"
 
 # --- Helper Functions ---
 def get_openrouter_headers() -> Dict[str, str]:
@@ -50,6 +61,55 @@ def get_openrouter_headers() -> Dict[str, str]:
     if YOUR_SITE_NAME:
         headers["X-Title"] = YOUR_SITE_NAME
     return headers
+
+def check_message_moderation(message: str, username: str) -> Dict[str, Any]:
+    """Check if a message is appropriate using AI."""
+    moderation_prompt = [
+        {"role": "system", "content": """You are a chat moderator AI. Analyze the message for:
+1. Abusive language
+2. Hate speech
+3. Harassment
+4. Excessive profanity
+5. Threatening content
+6. Spam/flooding
+
+Respond in JSON format:
+{
+    "is_inappropriate": true/false,
+    "reason": "brief explanation if inappropriate",
+    "action": "none" or "delete" or "ban"
+}
+
+Be strict but fair. Only recommend 'ban' for serious violations."""},
+        {"role": "user", "content": f"Message to moderate: {message}"}
+    ]
+
+    try:
+        response = requests.post(
+            url=OPENROUTER_API_URL,
+            headers=get_openrouter_headers(),
+            json={
+                "model": "openrouter/auto",
+                "messages": moderation_prompt,
+                "response_format": { "type": "json_object" }
+            },
+            timeout=10
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        if "choices" in result and len(result["choices"]) > 0:
+            try:
+                moderation_result = json.loads(result["choices"][0]["message"]["content"])
+                return moderation_result
+            except json.JSONDecodeError:
+                logger.error("Failed to parse moderation response as JSON")
+                return {"is_inappropriate": False, "reason": None, "action": "none"}
+        
+        return {"is_inappropriate": False, "reason": None, "action": "none"}
+    except Exception as e:
+        logger.error(f"Moderation check failed: {e}")
+        return {"is_inappropriate": False, "reason": None, "action": "none"}
 
 # --- API Endpoints ---
 
@@ -85,6 +145,41 @@ async def get_chat_room_page(room_id: str, request: Request):
         logger.error("index.html not found")
         raise HTTPException(status_code=500, detail="Frontend file missing.")
 
+# User Presence Management
+@app.post("/api/chat/{room_id}/presence")
+async def update_user_presence(room_id: str, payload: UserPresencePayload):
+    """Updates user presence in a room (join/leave)."""
+    if room_id not in chats:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    if room_id not in active_users:
+        active_users[room_id] = set()
+    
+    if payload.action == "join":
+        active_users[room_id].add(payload.username)
+        logger.info(f"User '{payload.username}' joined room {room_id}")
+    elif payload.action == "leave":
+        active_users[room_id].discard(payload.username)
+        logger.info(f"User '{payload.username}' left room {room_id}")
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Must be 'join' or 'leave'")
+    
+    return {
+        "active_users": list(active_users[room_id]),
+        "count": len(active_users[room_id])
+    }
+
+@app.get("/api/chat/{room_id}/users")
+async def get_active_users(room_id: str):
+    """Returns the list of active users in a room."""
+    if room_id not in chats:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    return {
+        "active_users": list(active_users.get(room_id, set())),
+        "count": len(active_users.get(room_id, set()))
+    }
+
 # Room Management
 @app.post("/api/create_room")
 async def create_room():
@@ -94,6 +189,7 @@ async def create_room():
         room_id = str(uuid4())[:8]
         
     chats[room_id] = []  # Initialize empty chat history
+    active_users[room_id] = set()  # Initialize empty set of active users
     logger.info(f"Created room: {room_id}")
     return {"room_id": room_id}
 
@@ -111,13 +207,12 @@ async def get_messages(room_id: str):
 # Send Message & Get AI Response
 @app.post("/api/chat/{room_id}/message")
 async def post_message(room_id: str, payload: MessagePayload):
-    """Receives a user message, adds it to history, gets AI response, adds it too, returns AI response."""
+    """Receives a user message, moderates it, adds to history if appropriate, gets AI response."""
     if room_id not in chats:
-        logger.warning(f"Attempted post message to non-existent room: {room_id}")
         raise HTTPException(status_code=404, detail="Room not found")
         
     if not OPENROUTER_API_KEY:
-         raise HTTPException(status_code=503, detail="AI Service not configured by administrator.")
+        raise HTTPException(status_code=503, detail="AI Service not configured by administrator.")
 
     username = payload.username if payload.username else "User"
     user_message_content = payload.message.strip()
@@ -125,8 +220,50 @@ async def post_message(room_id: str, payload: MessagePayload):
     if not user_message_content:
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
+    # Check if user is banned
+    if room_id in banned_users and username in banned_users[room_id]:
+        raise HTTPException(status_code=403, detail="You have been banned from this chat room")
+
+    # Moderate the message
+    moderation_result = check_message_moderation(user_message_content, username)
+    
+    if moderation_result["is_inappropriate"]:
+        if moderation_result["action"] == "ban":
+            # Ban the user
+            if room_id not in banned_users:
+                banned_users[room_id] = set()
+            banned_users[room_id].add(username)
+            
+            # Remove from active users
+            if room_id in active_users and username in active_users[room_id]:
+                active_users[room_id].remove(username)
+            
+            # Add system message about ban
+            system_message = {
+                "role": "system",
+                "content": f"User '{username}' has been banned for inappropriate behavior.",
+                "username": "System",
+                "timestamp": datetime.now().isoformat()
+            }
+            chats[room_id].append(system_message)
+            
+            raise HTTPException(status_code=403, detail=f"Banned: {moderation_result['reason']}")
+        
+        if moderation_result["action"] == "delete":
+            # Add a placeholder message
+            deleted_message = {
+                "role": "system",
+                "content": "[Message deleted by moderator]",
+                "username": "System",
+                "timestamp": datetime.now().isoformat()
+            }
+            chats[room_id].append(deleted_message)
+            
+            raise HTTPException(status_code=400, detail=f"Message deleted: {moderation_result['reason']}")
+
     timestamp = datetime.now().isoformat()
 
+    # If we get here, the message is appropriate - proceed with normal message handling
     # Add user message to history (with metadata)
     user_message_entry = {
         "role": "user",
